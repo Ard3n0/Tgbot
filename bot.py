@@ -39,15 +39,15 @@ async def start_web_server():
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     # Создаем чат через новый асинхронный клиент (aio) с моделью 3.0
-    user_chats[message.from_user.id] = client.aio.chats.create(model="gemini-3.0-flash")
-    await message.answer("Привет! Я твой личный ИИ-ассистент на базе новейшей Gemini 3.0. Напиши мне что-нибудь!")
+    user_chats[message.from_user.id] = client.aio.chats.create(model="gemini-2.0-flash")
+    await message.answer("Привет! Я твой личный ИИ-ассистент на базе новейшей Gemini 2.0. Напиши мне что-нибудь!")
 
 @dp.message()
 async def handle_message(message: Message):
     user_id = message.from_user.id
     
     if user_id not in user_chats:
-        user_chats[user_id] = client.aio.chats.create(model="gemini-3.0-flash")
+        user_chats[user_id] = client.aio.chats.create(model="gemini-2.0-flash")
         
     chat = user_chats[user_id]
     
