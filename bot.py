@@ -58,7 +58,7 @@ async def handle_message(message: Message):
     
     try:
         # Отправляем сообщение в чат с учетом истории
-        response = chat.send_message(message.text)
+        response = await chat.send_message_async(message.text)
         await message.answer(response.text)
     except Exception as e:
         await message.answer("Ой, что-то пошло не так. Попробуй позже.")
