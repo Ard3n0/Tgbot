@@ -61,8 +61,8 @@ async def handle_message(message: Message):
         response = await chat.send_message_async(message.text)
         await message.answer(response.text)
     except Exception as e:
-        await message.answer("Ой, что-то пошло не так. Попробуй позже.")
-        logging.error(f"Ошибка: {e}")
+        # Теперь бот будет жаловаться тебе лично!
+        await message.answer(f"Я сломался! Вот текст ошибки:\n{str(e)}")
 
 async def main():
     # Запускаем веб-сервер и бота одновременно
