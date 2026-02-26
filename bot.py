@@ -17,7 +17,8 @@ bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Меняем 1.5 на 3.0 (или 2.0, если 3.0 для твоего ключа еще в раннем доступе)
+model = genai.GenerativeModel('gemini-3.0-flash')
 
 # Словарь для хранения истории диалогов (чтобы бот помнил, о чем вы говорили)
 user_chats = {}
