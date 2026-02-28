@@ -37,7 +37,7 @@ SOLVER_MODELS = [
 # ⚖️ 2. СУДЬЯ (Подводит итоги)
 # Эта модель изучит ответы работяг и выдаст вердикт
 # ==========================================
-AGGREGATOR_MODEL = "ТВОЯgoogle/gemma-3-27b-it:free" # Советую поставить сюда "google/gemini-2.0-flash-exp:free"
+AGGREGATOR_MODEL = "google/gemma-3-27b-it:free" # Советую поставить сюда "google/gemini-2.0-flash-exp:free"
 
 # --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
 async def handle_ping(request):
