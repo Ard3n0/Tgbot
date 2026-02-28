@@ -6,19 +6,24 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters.command import Command
 from aiogram.types import Message
 from aiohttp import web
-from google import genai
+from openai import AsyncOpenAI
 
 # Получаем ключи
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ADMIN_ID = os.getenv("ADMIN_ID") # Твой ID из Render
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+ADMIN_ID = os.getenv("ADMIN_ID")
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+# Подключаемся к OpenRouter
+client = AsyncOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
+)
+
 user_chats = {}
 
 # --- ВЕБ-СЕРВЕР ---
@@ -38,30 +43,41 @@ async def start_web_server():
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    user_chats[message.from_user.id] = client.aio.chats.create(model="gemini-2.0-flash")
-    await message.answer("Привет! Я твой личный ИИ-ассистент на базе Gemini 2.0. Напиши мне что-нибудь!")
+    user_chats[message.from_user.id] = []
+    await message.answer("Привет! Я твой ИИ-ассистент на базе Gemini 2.0. Напиши мне что-нибудь!")
 
 @dp.message()
 async def handle_message(message: Message):
     user_id = message.from_user.id
     
     if user_id not in user_chats:
-        user_chats[user_id] = client.aio.chats.create(model="gemini-2.0-flash")
+        user_chats[user_id] = []
         
-    chat = user_chats[user_id]
+    user_chats[user_id].append({"role": "user", "content": message.text})
+    
+    if len(user_chats[user_id]) > 10:
+        user_chats[user_id] = user_chats[user_id][-10:]
+        
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     
     try:
-        response = await chat.send_message(message.text)
-        await message.answer(response.text)
+        # Запрашиваем ответ у бесплатной модели Gemini 2.0 Flash
+        response = await client.chat.completions.create(
+            model="google/gemini-2.0-flash:free",
+            messages=user_chats[user_id]
+        )
+        
+        bot_reply = response.choices[0].message.content
+        user_chats[user_id].append({"role": "assistant", "content": bot_reply})
+        
+        await message.answer(bot_reply)
     except Exception as e:
         await message.answer(f"Я сломался! Вот текст ошибки:\n{str(e)}")
 
-# --- ФУНКЦИЯ УВЕДОМЛЕНИЯ АДМИНА ---
+# --- УВЕДОМЛЕНИЕ ПРИ ЗАПУСКЕ ---
 async def on_startup():
-    commit_msg = "Обновление применено (текст коммита не найден)"
+    commit_msg = "Обновление применено"
     try:
-        # Пытаемся вытащить сообщение последнего коммита через консоль
         commit_msg = subprocess.check_output(['git', 'log', '-1', '--pretty=%B']).decode('utf-8').strip()
     except Exception:
         pass
@@ -70,15 +86,15 @@ async def on_startup():
         try:
             await bot.send_message(
                 chat_id=ADMIN_ID, 
-                text=f"🚀 **Сервер запущен и готов к работе!**\n\n📝 _Последний коммит:_\n{commit_msg}",
+                text=f"🚀 **Сервер запущен!**\n\n📝 _Последний коммит:_\n{commit_msg}",
                 parse_mode="Markdown"
             )
         except Exception as e:
-            logging.error(f"Не удалось отправить уведомление: {e}")
+            logging.error(f"Ошибка уведомления: {e}")
 
 async def main():
     await start_web_server()
-    await on_startup() # Отправляем уведомление при старте
+    await on_startup()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
