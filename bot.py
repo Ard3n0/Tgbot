@@ -1,32 +1,45 @@
 import asyncio
 import logging
 import os
-import subprocess
 from aiogram import Bot, Dispatcher
 from aiogram.filters.command import Command
 from aiogram.types import Message
 from aiohttp import web
 from openai import AsyncOpenAI
 
-# Получаем ключи
+# Получаем ключи с сервера
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-ADMIN_ID = os.getenv("ADMIN_ID")
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
-# Подключаемся к OpenRouter
 client = AsyncOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
 )
 
-user_chats = {}
+# ==========================================
+# 🛠 1. РАБОТЯГИ (Решают тест)
+# Вставь сюда ID бесплатных моделей, которые будут думать над вопросом
+# ==========================================
+SOLVER_MODELS = [
+    "stepfun/step-3.5-flash:free", # Например: "google/gemini-2.0-flash-exp:free"
+    "arcee-ai/trinity-large-preview:free", # Например: "meta-llama/llama-3.3-70b-instruct:free"
+    "z-ai/glm-4.5-air:free", # Например: "mistralai/mistral-7b-instruct:free"
+    "qwen/qwen3-vl-235b-a22b-thinking",
+    "openai/gpt-oss-120b:free"
+]
 
-# --- ВЕБ-СЕРВЕР ---
+# ==========================================
+# ⚖️ 2. СУДЬЯ (Подводит итоги)
+# Эта модель изучит ответы работяг и выдаст вердикт
+# ==========================================
+AGGREGATOR_MODEL = "ТВОЯgoogle/gemma-3-27b-it:free" # Советую поставить сюда "google/gemini-2.0-flash-exp:free"
+
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
 async def handle_ping(request):
     return web.Response(text="Я не сплю! Бот работает.")
 
@@ -43,58 +56,77 @@ async def start_web_server():
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    user_chats[message.from_user.id] = []
-    await message.answer("Привет! Я твой ИИ-ассистент на базе Gemini 2.0. Напиши мне что-нибудь!")
+    text = (f"Привет! Я умный консилиум.\n"
+            f"У меня в подчинении {len(SOLVER_MODELS)} моделей-решателей и 1 судья.\n\n"
+            f"Скинь мне тест, и я выдам тебе точный ответ по большинству голосов!")
+    await message.answer(text)
 
+# Функция: отправляем вопрос одному работяге
+async def fetch_answer_from_model(model_id: str, question: str, index: int) -> str:
+    try:
+        response = await client.chat.completions.create(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": "Ты решаешь тесты. Рассуждай кратко. В самом конце обязательно напиши свой выбор (например: 'ИТОГ: Вариант В')."},
+                {"role": "user", "content": question}
+            ],
+            timeout=45.0
+        )
+        # Возвращаем ответ вместе с номером модели, чтобы Судья понимал, кто это написал
+        return f"--- Ответ Модели {index} ---\n{response.choices[0].message.content}\n"
+    except Exception as e:
+        return f"--- Ответ Модели {index} ---\n❌ Ошибка связи с моделью.\n"
+
+# Основной обработчик
 @dp.message()
-async def handle_message(message: Message):
-    user_id = message.from_user.id
-    
-    if user_id not in user_chats:
-        user_chats[user_id] = []
-        
-    user_chats[user_id].append({"role": "user", "content": message.text})
-    
-    if len(user_chats[user_id]) > 10:
-        user_chats[user_id] = user_chats[user_id][-10:]
-        
+async def handle_test_question(message: Message):
+    # Отправляем заглушку, чтобы пользователь знал, что процесс идет
+    status_msg = await message.answer(f"🧠 Опрашиваю {len(SOLVER_MODELS)} нейросетей одновременно... Ожидайте.")
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     
-    try:
-        # Запрашиваем ответ у бесплатной модели Gemini 2.0 Flash
-        response = await client.chat.completions.create(
-            model="stepfun/step-3.5-flash:free",
-            messages=user_chats[user_id]
-        )
-        
-        bot_reply = response.choices[0].message.content
-        user_chats[user_id].append({"role": "assistant", "content": bot_reply})
-        
-        await message.answer(bot_reply)
-    except Exception as e:
-        await message.answer(f"Я сломался! Вот текст ошибки:\n{str(e)}")
-
-# --- УВЕДОМЛЕНИЕ ПРИ ЗАПУСКЕ ---
-async def on_startup():
-    commit_msg = "Обновление применено"
-    try:
-        commit_msg = subprocess.check_output(['git', 'log', '-1', '--pretty=%B']).decode('utf-8').strip()
-    except Exception:
-        pass
+    # ЭТАП 1: Одновременный опрос всех моделей-работяг
+    tasks = [fetch_answer_from_model(model_id, message.text, i+1) for i, model_id in enumerate(SOLVER_MODELS)]
+    results = await asyncio.gather(*tasks)
     
-    if ADMIN_ID:
-        try:
-            await bot.send_message(
-                chat_id=ADMIN_ID, 
-                text=f"🚀 **Сервер запущен!**\n\n📝 _Последний коммит:_\n{commit_msg}",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logging.error(f"Ошибка уведомления: {e}")
+    # Собираем все их ответы в один большой текст
+    all_answers_text = "\n".join(results)
+    
+    await bot.edit_message_text(f"⚖️ Ответы получены! Судья ({AGGREGATOR_MODEL}) подсчитывает голоса...", 
+                                chat_id=message.chat.id, 
+                                message_id=status_msg.message_id)
+    
+    # ЭТАП 2: Передаем все ответы Судье для подведения итогов
+    judge_prompt = (
+        f"Ты — главный судья консилиума ИИ. Тебе дается исходный вопрос теста и сырые ответы нескольких нейросетей.\n"
+        f"Твоя задача:\n"
+        f"1. Изучить их ответы и кратко выписать списком, какой конкретный вариант выбрала каждая модель (букву или короткую фразу).\n"
+        f"2. Подсчитать голоса.\n"
+        f"3. Выдать финальный рекомендуемый ответ на основе большинства голосов.\n\n"
+        f"ВОПРОС ТЕСТА:\n{message.text}\n\n"
+        f"ОТВЕТЫ НЕЙРОСЕТЕЙ:\n{all_answers_text}"
+    )
+
+    try:
+        judge_response = await client.chat.completions.create(
+            model=AGGREGATOR_MODEL,
+            messages=[
+                {"role": "system", "content": "Ты строгий и объективный судья. Пиши только сухую выжимку по фактам, без лишней воды."},
+                {"role": "user", "content": judge_prompt}
+            ],
+            timeout=30.0
+        )
+        final_verdict = judge_response.choices[0].message.content
+        
+        # Отправляем пользователю только красивый вердикт судьи
+        await message.answer(f"🏆 **РЕЗУЛЬТАТ КОНСИЛИУМА** 🏆\n\n{final_verdict}")
+        # Удаляем временное сообщение со статусом
+        await bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
+        
+    except Exception as e:
+        await message.answer(f"Судья сломался! Ошибка: {str(e)}")
 
 async def main():
     await start_web_server()
-    await on_startup()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
