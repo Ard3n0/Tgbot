@@ -63,7 +63,7 @@ async def handle_message(message: Message):
     try:
         # Запрашиваем ответ у бесплатной модели Gemini 2.0 Flash
         response = await client.chat.completions.create(
-            model="google/gemini-2.0-pro-exp-02-05:free",
+            model="google/gemini-2.5-flash-preview-09-2025",
             messages=user_chats[user_id]
         )
         
